@@ -12,7 +12,7 @@ public:
 
 	using return_type = std::vector<double>;
 
-	PolicyValueNet(int n = 15,int batchsize=4, std::string model_path = "C:/yu/frozen_model.pb")
+	PolicyValueNet(int n = 15,int batchsize=4, std::string model_path = "./frozen_model.pb")
 		:n(n),batchsize(batchsize),running(true),model_path(model_path)
 	{
 		status = tensorflow::NewSession(tensorflow::SessionOptions(), &session);
