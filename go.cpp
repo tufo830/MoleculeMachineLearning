@@ -7,7 +7,7 @@ int main() {
 	scanf_s("%d", &mode);
 	
 	if (mode == 1) {
-		printf("\n\ninput 0 if you want move firstly,else input 1\n");
+		printf("\n\ninput 0 if you want move first,else input 1\n");
 
 		int start_player = 0;
 		scanf_s("%d", &start_player);
