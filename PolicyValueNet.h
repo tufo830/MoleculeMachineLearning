@@ -1,141 +1,157 @@
-﻿#include <tensorflow/core/platform/env.h>
-#include <tensorflow/core/public/session.h>
+﻿#include <future>
+#include<queue>
 #include "Board.h"
-#define NOMINMAX
 
-using std::string;
-using std::vector;
+#include <tensorflow/core/platform/env.h>
+#include <tensorflow/core/public/session.h>
 
-using tensorflow::Tensor;
 
 class PolicyValueNet
 {
 public:
-	PolicyValueNet(int n = 15, string model_path ="C:/yu/frozen_model.pb") {
-		this->model_path = model_path;//"C:/yu/alphago/ahphago/tfgo/output_model/pb_model/frozen_model.pb"
-		this->n = n;//"‪C:/yu/alphago/ahphago/tfgo/mode.pb"
+
+	using return_type = std::vector<double>;
+
+	PolicyValueNet(int n = 15,int batchsize=4, std::string model_path = "C:/yu/frozen_model.pb")
+		:n(n),batchsize(batchsize),running(true),model_path(model_path)
+	{
 		status = tensorflow::NewSession(tensorflow::SessionOptions(), &session);
+		tensorflow::GraphDef graph_def;
 		status = tensorflow::ReadBinaryProto(tensorflow::Env::Default(), model_path, &graph_def);
 		status = session->Create(graph_def);
 		if (!status.ok()) {
-			std::cout << status.ToString()<<std::endl;
-		}
-	}
-	vector<double> getprob(const Board& board, double& value) {
-		Tensor state(tensorflow::DT_FLOAT, tensorflow::TensorShape({ 1,9,15,15 }));
-		auto input = state.tensor<float, 4>();
-		int step = board.move_seq.size();
-		for (int k = 0; k < 8; k++) {
-			for (int i = 0; i < n; i++)
-				for (int j = 0; j < n; j++)
-					input(0, k, i, j) = 0.0;
-			if (k % 2 == 1) {
-				for (int i = step - 2; i >= 0; i -= 2) {
-					int h = board.move_seq[i] / n, w = board.move_seq[i] % n;
-					input(0, k, h, w) = 1.0;
-				}
-			}
-			else {
-				for (int i = step - 1; i >= 0; i -= 2) {
-					int h = board.move_seq[i] / n, w = board.move_seq[i] % n;
-					input(0, k, h, w) = 1.0;
-				}
-			}
-		}
-
-		int plane, i, k;
-		for (i = step - 1, plane = 2; i >= 0 && i + 6 >= step; i -= 2, plane += 2) {
-			int h = board.move_seq[i] / n, w = board.move_seq[i] % n;
-			for (k = plane; k < 8; k += 2) {
-				assert(input(0, k, h, w) == 1);
-				input(0, k, h, w) = 0.0;
-			}
-		}
-		//printf("start deleting oppo move\n");
-		for (i = step - 2, plane = 3; i >= 0 && i + 6 >= step; i -= 2, plane += 2) {
-			int h = board.move_seq[i] / n, w = board.move_seq[i] % n;
-			for (k = plane; k < 8; k += 2) {
-				assert(input(0, k, h, w) == 1);
-				input(0, k, h, w) = 0.0;
-			}
-		}
-
-		for (int i = 0; i < n; i++)
-			for (int j = 0; j < n; j++) {
-				if (step % 2 == 0)  input(0, 8, i, j) = 1.0;
-				else input(0, 8, i, j) = 0.0;
-			}
-
-
-		//for (int k = 0; k < 8; k += 2) {
-		//	for (int i = 0; i < 15; i++) {
-		//		for (int j = 0; j < 15; j++)
-		//			printf("%.0f ", input(0, k, i, j));
-		//		printf("\n");
-		//	}
-		//	printf("\n\n");
-		//}
-		//printf("----------------------------------------------------------------------------------------\n");
-		//for (int k = 1; k < 8; k += 2) {
-		//	for (int i = 0; i < 15; i++) {
-		//		for (int j = 0; j < 15; j++)
-		//			printf("%.0f ", input(0, k, i, j));
-		//		printf("\n");
-		//	}
-		//	printf("\n\n");
-		//}
-		//for (int i = 0; i < 15; i++) {
-		//	for (int j = 0; j < 15; j++)
-		//		printf("%.0f ", input(0, 8, i, j));
-		//	printf("\n");
-		//}
-
-		//model / dense_layer_1 / LogSoftmax:0 model / flatten_layer_3 / Tanh : 0
-		vector<Tensor> outputs;
-		{
-			std::lock_guard<std::mutex> lock(this->lock);
-			//status = session->Run({ {"state_1",state} }, {}, { "model_1/dense_layer_1/LogSoftmax:0", "model_1/flatten_layer_3/Tanh:0" }, &outputs);
-
-			//{ "model/dense_layer_1/LogSoftmax:0", "model/flatten_layer_3/Tanh:0" }
-			status = session->Run({ {"state",state} }, { "model/dense_layer_1/LogSoftmax","model/flatten_layer_3/Tanh" }, {}, &outputs);
 			std::cout << status.ToString() << std::endl;
 		}
-		//status = session->Run({ {"state",state} }, { "probability","value" }, {}, &outputs);
-		//status = session->Run({ {"state",state} }, { "model/dense_layer_1/LogSoftmax","model/flatten_layer_3/Tanh" }, {}, &outputs);
-		Tensor* probability = &outputs[0];
-		//const Eigen::TensorMap<Eigen::Tensor<double, 1, Eigen::RowMajor>, Eigen::Aligned>& prediction = probability->flat<double>();
-		const Eigen::TensorMap<Eigen::Tensor<float, 1, Eigen::RowMajor>, Eigen::Aligned>& prediction = probability->flat<float>();
-		vector<double> prob(n * n, 0);
-		//vector<double> prob;
-		double total = 1;
-		for (int i = 0; i < prediction.size(); i++) {
-			int h = i / n, w = i % n;
-			prob[(14 - h) * n + w] = exp(prediction(i));
-		}
-		//printf("this is ok\n");
-		for (int i = 0; i < board.move_seq.size(); i++) {
-			total -= prob[board.move_seq[i]];
-			prob[board.move_seq[i]] = 0;
-		}
-		for (int i = 0; i < prob.size(); i++)
-			prob[i] /= total;
-		value = *(outputs[1].flat<float>().data());
-		//printf("value is %f", value);
-		//if (board.move_seq.size() == 2 && board.move_seq[0] == 113 && (board.move_seq[1] == 27||board.move_seq[1] == 106) )  value = 0.998;
-		//value = *(outputs[1].data());
-		return prob;
+		this->loop = std::make_unique<std::thread>([this]() {
+			while (this->running) {
+				this->infer();
+			}
+			});
 	}
-	~PolicyValueNet() {
-		session->Close();
-		//delete session;
-		session = nullptr;
+	std::future<return_type> commit(const Board& board) {
+		std::promise<return_type> promise;
+		std::future<return_type> future = promise.get_future();
+		{
+			std::lock_guard<std::mutex> lock(this->lock);
+			tasks.emplace(std::make_pair(board.move_seq,std::move(promise)));
+		}
+		cv.notify_all();
+		return future;
 	}
 
+	~PolicyValueNet() {
+		this->running = false;
+		this->loop->join();
+		session->Close();
+		session = nullptr;
+	}
 private:
+
+    //combine move sequence and the result,the probability and value saved in one vector
+	using task_type = std::pair<std::vector<int>, std::promise<return_type>>;
+
+	void infer() {
+		std::vector < std::vector<int>> states;
+		std::vector<std::promise<return_type>> promises;
+		bool timeout = false;
+		while (!timeout && states.size() < this->batchsize) {
+			using namespace std::chrono_literals;
+			std::unique_lock<std::mutex> lock(this->lock);
+			if (cv.wait_for(lock, 1ms, [this]() {return this->tasks.size() > 0; })) {
+				auto task = std::move(tasks.front());
+				states.emplace_back(task.first);
+				promises.emplace_back(std::move(task.second));
+				this->tasks.pop();
+			}
+			else {
+				timeout = true;
+			}
+		}
+		if (states.size() == 0) 
+			return; 
+
+		int bs = states.size();
+		tensorflow::Tensor state(tensorflow::DT_FLOAT, tensorflow::TensorShape({ bs,9,15,15 }));
+		auto input = state.tensor<float, 4>();
+
+		for (int b = 0; b < bs; b++) {
+			int move_num = states[b].size();
+			for (int p = 0; p < 8; p++) {
+				for (int h = 0; h < n; h++)
+					for (int w = 0; w < n; w++)
+						input(b, p, h, w) = 0.0;
+				if (p % 2 == 1) {
+					for (int i = move_num - 2; i >= 0; i -= 2) {
+						int h = states[b][i] / n, w = states[b][i] % n;
+						input(b, p, h, w) = 1.0;
+					}
+				}
+				else {
+					for (int i = move_num - 1; i >= 0; i -= 2) {
+						int h = states[b][i] / n, w = states[b][i] % n;
+						input(b, p, h, w) = 1.0;
+					}
+				}
+			}
+
+			for (int h = 0; h < n; h++) {
+				for (int w = 0; w < n; w++) {
+					input(b, 8, h, w) = (move_num + 1) % 2;
+				}
+			}
+
+			for (int i = move_num - 1, plane = 2; i >= 0 && i + 6 >= move_num; i -= 2, plane += 2) {
+				int h = states[b][i] / n, w = states[b][i] % n;
+				for (int p = plane; p < 8; p += 2) {
+					input(b, p, h, w) = 0.0;
+				}
+			}
+			for (int i = move_num - 2, plane = 3; i >= 0 && i + 6 >= move_num; i -= 2, plane += 2) {
+				int h = states[b][i] / n, w = states[b][i] % n;
+				for (int p = plane; p < 8; p += 2) {
+					input(b, p, h, w) = 0.0;
+				}
+			}
+		}
+		std::vector<tensorflow::Tensor> outputs;
+		//status = session->Run({ {"state",state} }, { "model/dense_layer_1/LogSoftmax","model/flatten_layer_3/Tanh" }, {}, &outputs); data type is float
+		status = session->Run({ {"state",state} }, { "probability","value" }, {}, &outputs);
+		if (!status.ok()) {
+			std::cout << status.ToString() << std::endl;
+		}
+		
+		//const Eigen::TensorMap<Eigen::Tensor<double, 1, Eigen::RowMajor>, Eigen::Aligned>& prediction = outputs[0].flat<double>();
+		auto prediction = outputs[0].flat<double>();
+		for (int i = 0; i < bs; i++) {
+			std::vector<double> prob(n * n, 0);
+			for (int pos = 0; pos < n * n; pos++) {
+				int h = pos / n, w = pos % n;
+				prob[(14 - h) * n + w] = exp(prediction(pos + i * n * n));
+			}
+			double sum = 1;
+			for (int j = 0; j < states[i].size(); j++) {//mask the invalid position
+				sum -= prob[states[i][j]];
+				prob[states[i][j]] = 0;
+			}
+			for (int pos = 0; pos < n * n; pos++) {//Normalization
+				prob[pos] /= sum;
+			}
+			prob.push_back(outputs[1].flat<double>()(i));
+			//the probability of position and value of current state saved in one vecctor
+			//value = *(outputs[1].flat<float>().data());if the batch size is 1
+			promises[i].set_value(std::move(prob));
+		}
+	}
+
+	int n, batchsize;
+	std::string model_path;
+	bool running;
+
 	std::mutex lock;
-	int n;
-	string model_path;
+	std::condition_variable cv;
+	std::queue<task_type> tasks;
+	std::unique_ptr<std::thread> loop;
+
 	tensorflow::Session* session;
 	tensorflow::Status status;
-	tensorflow::GraphDef graph_def;
 };
